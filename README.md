@@ -1,6 +1,6 @@
 # VALHALLA UNLOCK TOOL
 
-Unlock bootloader + FRP bypass for Motorola MediaTek devices.
+Unlock bootloaders and experimentally erase FRP on Motorola MediaTek devices.
 
 WARNING: CAN BRICK YOUR DEVICE! Use at your own risk!
 
@@ -8,7 +8,7 @@ WARNING: CAN BRICK YOUR DEVICE! Use at your own risk!
 
 ## What this is
 
-A simple tool that unlocks your bootloader or bypasses FRP on Motorola MediaTek phones. It handles everything automatically — downloads the exploit, installs dependencies, sets up USB permissions on Linux, and does the unlock with one click.
+A simple tool that unlocks your bootloader or attempts an experimental FRP erase on Motorola MediaTek phones. It handles setup automatically — downloads the exploit, installs dependencies, sets up USB permissions on Linux, and runs the selected workflow.
 
 No command line hacking. Just run it and click a button.
 
@@ -17,8 +17,8 @@ No command line hacking. Just run it and click a button.
 ## Features
 
 - Unlocks bootloader (factory reset)
-- Bypasses FRP (untested, but based on Val Protocol erase-serial)
-- Does both in one click
+- Attempts FRP erase using Val Protocol erase-serial and verifies `frp-state`
+- Stops combined mode if FRP erase cannot be verified
 - Auto-downloads Val Protocol exploit from GitHub
 - Auto-installs dependencies on Linux
 - Auto-sets up udev rules on Linux
@@ -33,6 +33,20 @@ No command line hacking. Just run it and click a button.
 - Moto G Play 2026 (XT2615V, XT2615-1) confirmed working
 - Moto G series, Edge series, Razr series with MTK chips
 - May work on other MediaTek Motorola devices
+
+### Tested status
+
+- Moto G Play 2026 (XT2615V, XT2615-1): bootloader unlock reported working by the project author.
+- Motorola Milan (XT2211DL): bootloader unlock verified on stock Android 12 LK; FRP erase **did not succeed** and remained `protected (277)`.
+
+FRP support must be treated as device-specific and experimental. A successful
+fastboot command is not proof that FRP was erased; Valhalla now reports success
+only when the device's `frp-state` no longer says `protected`.
+
+On Milan, the erase-serial flow also cannot be retried after unlocking because
+the bootloader returns `Already unlocked`. Val Protocol's separate ARM32
+erase-token patcher rejected this LK's control-flow shape, so its safety check
+must not be bypassed or force-patched.
 
 ---
 
