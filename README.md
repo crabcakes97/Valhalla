@@ -17,7 +17,7 @@ No command line hacking. Just run it and click a button.
 ## Features
 
 - Unlocks bootloader (factory reset)
-- Attempts FRP erase using Val Protocol erase-serial and verifies `frp-state`
+- Attempts FRP erase using Val Protocol erase-serial, warns about its data wipe, and verifies `frp-state`
 - Stops combined mode if FRP erase cannot be verified
 - Auto-downloads Val Protocol exploit from GitHub
 - Auto-installs dependencies on Linux
@@ -37,16 +37,21 @@ No command line hacking. Just run it and click a button.
 ### Tested status
 
 - Moto G Play 2026 (XT2615V, XT2615-1): bootloader unlock reported working by the project author.
-- Motorola Milan (XT2211DL): bootloader unlock verified on stock Android 12 LK; FRP erase **did not succeed** and remained `protected (277)`.
+- Motorola Milan (XT2211DL): bootloader unlock verified on stock Android 12 LK. The original Valhalla FRP run falsely reported success while FRP remained `protected (277)`. A separate, firmware-specific post-unlock experiment subsequently cleared FRP; it is documented in [`docs/milan-xt2211dl-results.md`](docs/milan-xt2211dl-results.md) and is not automatically applied by Valhalla.
 
 FRP support must be treated as device-specific and experimental. A successful
 fastboot command is not proof that FRP was erased; Valhalla now reports success
 only when the device's `frp-state` no longer says `protected`.
 
-On Milan, the erase-serial flow also cannot be retried after unlocking because
-the bootloader returns `Already unlocked`. Val Protocol's separate ARM32
-erase-token patcher rejected this LK's control-flow shape, so its safety check
-must not be bypassed or force-patched.
+On an unlocked Milan, the unmodified erase-serial flow exits through the
+`Already unlocked` branch before reaching its token/erase path. Val Protocol's
+separate ARM32 erase-token patcher rejected this LK's control-flow shape, so its
+safety check must not be bypassed or force-patched.
+
+The erase-serial preset is destructive. Its ARM32 erase-only flow targets
+`metadata`, `userdata`, and `md_udc`; Valhalla rewrites `md_udc` to `frp`.
+Therefore FRP mode must be treated as a factory reset/data erase even if a
+particular failed attempt appears to leave data intact.
 
 ---
 
@@ -164,7 +169,8 @@ Install Motorola USB drivers from the official site.
 THIS CAN PERMANENTLY BRICK YOUR DEVICE!
 
 - Flashing a bad LK can hard-brick your phone
-- DO NOT flash the original LK back after unlocking
+- Only flash an LK image that exactly matches the device and firmware
+- Keep both the stock LK and every successfully booted patched LK backed up
 - Keep a full stock firmware backup ready
 - Use at your own risk! NO responsibility accepted!
 

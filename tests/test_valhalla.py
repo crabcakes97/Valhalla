@@ -130,6 +130,18 @@ class FastbootWorkflowTests(unittest.TestCase):
         tool.install_dependencies.assert_not_called()
         self.assertTrue(any("Already unlocked" in line for line in tool.logs))
 
+    @patch("Valhalla.messagebox.askyesno", return_value=False, create=True)
+    def test_frp_mode_requires_destructive_erase_confirmation(self, _confirm):
+        tool = make_tool()
+        tool.get_fastboot_var = Mock(return_value="oem_locked")
+        tool.install_dependencies = Mock()
+
+        result = tool.run_frp_only()
+
+        self.assertFalse(result)
+        tool.install_dependencies.assert_not_called()
+        self.assertTrue(any("cancelled" in line for line in tool.logs))
+
     @patch("Valhalla.messagebox.askyesno", return_value=True, create=True)
     def test_combined_mode_stops_when_frp_verification_fails(self, _confirm):
         tool = make_tool()
@@ -140,9 +152,11 @@ class FastbootWorkflowTests(unittest.TestCase):
 
         self.assertFalse(result)
         tool.run_bootloader_unlock.assert_not_called()
+        tool.run_frp_only.assert_called_once_with(confirmation_already_given=True)
 
+    @patch("Valhalla.messagebox.askyesno", return_value=True, create=True)
     @patch("Valhalla.subprocess.run")
-    def test_frp_mode_reports_protected_state_as_failure(self, run):
+    def test_frp_mode_reports_protected_state_as_failure(self, run, _confirm):
         tool = self._configured_frp_tool("protected (277)")
         run.return_value = completed(stderr="OKAY\n")
 
@@ -152,8 +166,9 @@ class FastbootWorkflowTests(unittest.TestCase):
         self.assertTrue(any("failed verification" in line for line in tool.logs))
         self.assertFalse(any("FRP erase verified" in line for line in tool.logs))
 
+    @patch("Valhalla.messagebox.askyesno", return_value=True, create=True)
     @patch("Valhalla.subprocess.run")
-    def test_frp_mode_reports_success_only_after_unprotected_state(self, run):
+    def test_frp_mode_reports_success_only_after_unprotected_state(self, run, _confirm):
         tool = self._configured_frp_tool("unprotected")
         run.return_value = completed(stderr="OKAY\n")
 
@@ -162,8 +177,9 @@ class FastbootWorkflowTests(unittest.TestCase):
         self.assertTrue(result)
         self.assertTrue(any("FRP erase verified" in line for line in tool.logs))
 
+    @patch("Valhalla.messagebox.askyesno", return_value=True, create=True)
     @patch("Valhalla.subprocess.run")
-    def test_frp_mode_checks_trigger_return_code(self, run):
+    def test_frp_mode_checks_trigger_return_code(self, run, _confirm):
         tool = self._configured_frp_tool("unprotected")
         run.return_value = completed(returncode=1, stderr="FAILED\n")
 

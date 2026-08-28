@@ -145,7 +145,7 @@ class ValhallaUnlockTool:
         
         modes = [
             ("🔓 Bootloader Unlock (Factory Reset)", "bootloader"),
-            ("🔑 Experimental FRP Erase (No Factory Reset)", "frp"),
+            ("🔑 Experimental FRP Erase (ERASES DATA)", "frp"),
             ("⚡ Bootloader Unlock + Experimental FRP Erase", "both")
         ]
         
@@ -835,11 +835,11 @@ class ValhallaUnlockTool:
             self.log(f"[!] Unlock error: {str(e)}")
             return False
             
-    def run_frp_only(self):
+    def run_frp_only(self, confirmation_already_given=False):
         self.log("")
         self.log("=" * 70)
         self.log("[🔑] Starting Experimental FRP Erase mode...")
-        self.log("[!] This will NOT wipe your data")
+        self.log("[!] This WILL erase metadata, userdata, and FRP when supported")
         self.log("=" * 70)
         self.root.update()
         securestate = self.get_fastboot_var("securestate")
@@ -847,6 +847,16 @@ class ValhallaUnlockTool:
             self.log("[!] FRP erase-serial cannot run after the bootloader is already unlocked.")
             self.log("[!] The bootloader short-circuits the OEM unlock command as 'Already unlocked'.")
             return False
+        if not confirmation_already_given:
+            confirm = messagebox.askyesno(
+                "⚠️ DATA ERASE WARNING",
+                "⚠️ THIS CAN PERMANENTLY BRICK YOUR DEVICE!\n\n"
+                "The erase-serial flow targets metadata, userdata, and FRP. "
+                "It will erase user data when supported.\n\nContinue?",
+            )
+            if not confirm:
+                self.log("[!] Operation cancelled")
+                return False
         if not self.install_dependencies():
             return False
         self.update_progress(40)
@@ -941,7 +951,7 @@ class ValhallaUnlockTool:
             self.log("[!] Operation cancelled")
             return False
         self.log("[*] Step 1: Attempting FRP erase...")
-        if not self.run_frp_only():
+        if not self.run_frp_only(confirmation_already_given=True):
             return False
         self.log("")
         self.log("[*] Step 2: Unlocking bootloader...")
