@@ -38,6 +38,9 @@ No command line hacking. Just run it and click a button.
 
 - Moto G Play 2026 (XT2615V, XT2615-1): bootloader unlock reported working by the project author.
 - Motorola Milan (XT2211DL): bootloader unlock verified on stock Android 12 LK. The original Valhalla FRP run falsely reported success while FRP remained `protected (277)`. A separate, firmware-specific post-unlock experiment subsequently cleared FRP; it is documented in [`docs/milan-xt2211dl-results.md`](docs/milan-xt2211dl-results.md) and is not automatically applied by Valhalla.
+- Moto G Play 2023 BL Confirmed Unlocked
+- Moto G 2025 BL Confirmed Unlocked
+- Moto G Power 2026 Bl Confirmed Unlocked 
 
 FRP support must be treated as device-specific and experimental. A successful
 fastboot command is not proof that FRP was erased; Valhalla now reports success
