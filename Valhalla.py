@@ -33,6 +33,8 @@ from tkinter import ttk, messagebox, scrolledtext, StringVar
 import urllib.request
 import zipfile
 import io
+import re
+import time
 
 VERSION = "> :)"
 TOOL_NAME = "Valhalla Unlock Tool"
@@ -40,6 +42,33 @@ CREATOR = "RomLord14495"
 EXPLOIT = "Val Protocol by Maikyxd"
 SECRET = "Valeria"
 VAL_PROTOCOL_ZIP = "https://github.com/Maikyxd/val-protocol/archive/refs/heads/main.zip"
+
+
+def parse_fastboot_var(stdout, stderr, name):
+    """Return one exact fastboot getvar value from stdout or stderr."""
+    pattern = re.compile(
+        rf"^\s*(?:\(bootloader\)\s*)?{re.escape(name)}\s*:\s*(.*?)\s*$",
+        re.IGNORECASE,
+    )
+    for stream in (stdout or "", stderr or ""):
+        for line in stream.splitlines():
+            match = pattern.match(line)
+            if match and match.group(1):
+                return match.group(1).strip()
+    return None
+
+
+def is_unlocked_state(value):
+    normalized = (value or "").strip().lower()
+    return normalized == "unlocked" or normalized.endswith("_unlocked")
+
+
+def is_frp_protected(value):
+    normalized = (value or "").strip().lower()
+    if "unprotected" in normalized or normalized.startswith("not protected"):
+        return False
+    return re.search(r"\bprotected\b", normalized) is not None
+
 
 class ValhallaUnlockTool:
     def __init__(self, root):
@@ -116,8 +145,8 @@ class ValhallaUnlockTool:
         
         modes = [
             ("🔓 Bootloader Unlock (Factory Reset)", "bootloader"),
-            ("🔑 FRP Bypass Only (No Factory Reset)", "frp"),
-            ("⚡ Bootloader Unlock + FRP Bypass", "both")
+            ("🔑 Experimental FRP Erase (ERASES DATA)", "frp"),
+            ("⚡ Bootloader Unlock + Experimental FRP Erase", "both")
         ]
         
         for text, value in modes:
@@ -396,15 +425,12 @@ class ValhallaUnlockTool:
             result = subprocess.run(["fastboot", "getvar", "serialno"], 
                                    capture_output=True, text=True, timeout=3)
             self.log(f"[VERBOSE] Fastboot return code: {result.returncode}")
-            if result.returncode == 0:
+            serial = parse_fastboot_var(result.stdout, result.stderr, "serialno")
+            if result.returncode == 0 and serial:
                 self.log("[VERBOSE] Fastboot is accessible")
                 return True
-            elif result.returncode == 1:
-                self.log("[VERBOSE] Fastboot returned 1 (device not connected)")
-                return True
-            else:
-                self.log(f"[VERBOSE] Fastboot returned {result.returncode}")
-                return False
+            self.log("[VERBOSE] Fastboot did not return a device serial")
+            return False
         except FileNotFoundError:
             self.log("[VERBOSE] Fastboot not found")
             return False
@@ -451,35 +477,11 @@ class ValhallaUnlockTool:
             if err_output:
                 self.log(f"[VERBOSE] stderr: '{err_output}'")
             
-            if "serialno:" in output:
-                serial = output.split("serialno:")[1].strip()
-                if serial:
-                    self.log(f"[+] Serial number: {serial}")
-                    self.serial_number = serial
-                    return serial
-                else:
-                    self.log("[VERBOSE] serialno: found but value is empty")
-            
-            if output and len(output) > 5 and " " not in output and ":" not in output:
-                self.log(f"[+] Serial number: {output}")
-                self.serial_number = output
-                return output
-            
-            if output and " " in output and len(output) > 10:
-                serial = output.replace(" ", "")
-                if len(serial) > 5:
-                    self.log(f"[+] Serial number: {serial}")
-                    self.serial_number = serial
-                    return serial
-                else:
-                    self.log("[VERBOSE] Spaced output too short after removing spaces")
-            
-            if "serialno:" in err_output:
-                serial = err_output.split("serialno:")[1].strip()
-                if serial:
-                    self.log(f"[+] Serial number: {serial}")
-                    self.serial_number = serial
-                    return serial
+            serial = parse_fastboot_var(output, err_output, "serialno")
+            if serial:
+                self.log(f"[+] Serial number: {serial}")
+                self.serial_number = serial
+                return serial
                 
             self.log("[!] Could not parse serial number.")
             self.log(f"[VERBOSE] Raw output: '{output}'")
@@ -494,6 +496,59 @@ class ValhallaUnlockTool:
             self.log(f"[!] Error: {str(e)}")
             self.log(f"[VERBOSE] Exception: {type(e).__name__}")
             return None
+
+    def get_fastboot_var(self, name, timeout=5, verbose=True):
+        try:
+            result = subprocess.run(
+                ["fastboot", "getvar", name],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return None
+
+        value = parse_fastboot_var(result.stdout, result.stderr, name)
+        if verbose:
+            self.log(f"[VERBOSE] fastboot getvar {name}: {value!r} (return code {result.returncode})")
+        return value if result.returncode == 0 else None
+
+    def wait_for_fastboot(self, timeout=30, poll_interval=1):
+        self.log("[*] Waiting for device to return to fastboot...")
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            serial = self.get_fastboot_var("serialno", timeout=3, verbose=False)
+            if serial:
+                self.serial_number = serial
+                self.log(f"[+] Device returned to fastboot (Serial: {serial})")
+                return True
+            self.root.update()
+            time.sleep(poll_interval)
+        self.log("[!] Timed out waiting for the device to return to fastboot")
+        return False
+
+    def reboot_bootloader(self):
+        self.log("[*] Rebooting bootloader to load the flashed LK...")
+        try:
+            result = subprocess.run(
+                ["fastboot", "reboot", "bootloader"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except Exception as e:
+            self.log(f"[!] Bootloader reboot failed: {e}")
+            return False
+
+        self.log(f"[VERBOSE] fastboot reboot bootloader return code: {result.returncode}")
+        if result.stdout.strip():
+            self.log(f"[VERBOSE] stdout: {result.stdout.strip()}")
+        if result.stderr.strip():
+            self.log(f"[VERBOSE] stderr: {result.stderr.strip()}")
+        if result.returncode != 0:
+            self.log("[!] Could not reboot into the newly flashed bootloader")
+            return False
+        return self.wait_for_fastboot()
             
     def download_val_protocol(self):
         self.log("[*] Downloading Val Protocol from GitHub...")
@@ -718,11 +773,21 @@ class ValhallaUnlockTool:
         try:
             cmd = ["fastboot", "flash", "lk", img_name]
             self.log(f"[VERBOSE] Command: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                cwd=self.work_dir,
+            )
             self.log(f"[VERBOSE] Return code: {result.returncode}")
+            if result.stdout.strip():
+                self.log(f"[VERBOSE] stdout: {result.stdout.strip()}")
+            if result.stderr.strip():
+                self.log(f"[VERBOSE] stderr: {result.stderr.strip()}")
             if result.returncode == 0:
-                self.log("[+] Flashed successfully")
-                return True
+                self.log("[+] Flashed successfully; reboot is required before using the patch")
+                return self.reboot_bootloader()
             else:
                 self.log(f"[!] Flash failed: {result.stderr}")
                 return False
@@ -734,27 +799,64 @@ class ValhallaUnlockTool:
         self.log("[*] Unlocking bootloader...")
         self.update_status("Unlocking bootloader...")
         self.root.update()
+        current_state = self.get_fastboot_var("securestate")
+        if is_unlocked_state(current_state):
+            self.log(f"[+] Bootloader is already unlocked ({current_state})")
+            return True
         try:
             cmd = ["fastboot", "oem", "unlock", key]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-            if result.returncode == 0:
-                self.log("[+] Bootloader unlocked successfully!")
-                self.log("[!] Phone will factory reset and reboot")
-                return True
-            else:
+            self.log(f"[VERBOSE] Return code: {result.returncode}")
+            if result.stdout.strip():
+                self.log(f"[VERBOSE] stdout: {result.stdout.strip()}")
+            if result.stderr.strip():
+                self.log(f"[VERBOSE] stderr: {result.stderr.strip()}")
+            if result.returncode != 0:
                 self.log(f"[!] Unlock failed: {result.stderr}")
                 return False
+            self.log("[*] If prompted, confirm the unlock on the phone now.")
+            self.log("[*] Waiting for securestate to report an unlocked state...")
+            deadline = time.monotonic() + 180
+            last_state = None
+            while time.monotonic() < deadline:
+                state = self.get_fastboot_var("securestate", timeout=3, verbose=False)
+                if state and state != last_state:
+                    self.log(f"[VERBOSE] securestate: {state}")
+                    last_state = state
+                if is_unlocked_state(state):
+                    self.log(f"[+] Bootloader unlock verified ({state})")
+                    self.log("[!] Phone factory reset was requested by the bootloader")
+                    return True
+                self.root.update()
+                time.sleep(1)
+            self.log(f"[!] Unlock command completed, but securestate was not unlocked (last value: {last_state!r})")
+            return False
         except Exception as e:
             self.log(f"[!] Unlock error: {str(e)}")
             return False
             
-    def run_frp_only(self):
+    def run_frp_only(self, confirmation_already_given=False):
         self.log("")
         self.log("=" * 70)
-        self.log("[🔑] Starting FRP Bypass Only mode...")
-        self.log("[!] This will NOT wipe your data")
+        self.log("[🔑] Starting Experimental FRP Erase mode...")
+        self.log("[!] This WILL erase metadata, userdata, and FRP when supported")
         self.log("=" * 70)
         self.root.update()
+        securestate = self.get_fastboot_var("securestate")
+        if is_unlocked_state(securestate):
+            self.log("[!] FRP erase-serial cannot run after the bootloader is already unlocked.")
+            self.log("[!] The bootloader short-circuits the OEM unlock command as 'Already unlocked'.")
+            return False
+        if not confirmation_already_given:
+            confirm = messagebox.askyesno(
+                "⚠️ DATA ERASE WARNING",
+                "⚠️ THIS CAN PERMANENTLY BRICK YOUR DEVICE!\n\n"
+                "The erase-serial flow targets metadata, userdata, and FRP. "
+                "It will erase user data when supported.\n\nContinue?",
+            )
+            if not confirm:
+                self.log("[!] Operation cancelled")
+                return False
         if not self.install_dependencies():
             return False
         self.update_progress(40)
@@ -772,9 +874,36 @@ class ValhallaUnlockTool:
             return False
         self.update_progress(90)
         self.log("[*] Triggering FRP erase...")
-        subprocess.run(["fastboot", "oem", "unlock", key], capture_output=True)
+        try:
+            result = subprocess.run(
+                ["fastboot", "oem", "unlock", key],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except Exception as e:
+            self.log(f"[!] FRP trigger failed: {e}")
+            return False
+        self.log(f"[VERBOSE] FRP trigger return code: {result.returncode}")
+        if result.stdout.strip():
+            self.log(f"[VERBOSE] stdout: {result.stdout.strip()}")
+        if result.stderr.strip():
+            self.log(f"[VERBOSE] stderr: {result.stderr.strip()}")
+        if result.returncode != 0:
+            self.log("[!] FRP trigger command failed")
+            return False
+        if not self.reboot_bootloader():
+            self.log("[!] FRP trigger completed, but the device did not return for verification")
+            return False
+        frp_state = self.get_fastboot_var("frp-state")
+        if not frp_state:
+            self.log("[!] FRP trigger completed, but frp-state could not be verified")
+            return False
+        if is_frp_protected(frp_state):
+            self.log(f"[!] FRP erase failed verification: frp-state is still {frp_state}")
+            return False
         self.update_progress(100)
-        self.log("[+] FRP erased successfully!")
+        self.log(f"[+] FRP erase verified (frp-state: {frp_state})")
         return True
         
     def run_bootloader_unlock(self):
@@ -812,7 +941,7 @@ class ValhallaUnlockTool:
     def run_both(self):
         self.log("")
         self.log("=" * 70)
-        self.log("[⚡] Starting Bootloader Unlock + FRP Bypass mode...")
+        self.log("[⚡] Starting Bootloader Unlock + Experimental FRP Erase mode...")
         self.log("[!] This WILL factory reset your device")
         self.log("=" * 70)
         self.root.update()
@@ -821,8 +950,8 @@ class ValhallaUnlockTool:
         if not confirm:
             self.log("[!] Operation cancelled")
             return False
-        self.log("[*] Step 1: Bypassing FRP...")
-        if not self.run_frp_only():
+        self.log("[*] Step 1: Attempting FRP erase...")
+        if not self.run_frp_only(confirmation_already_given=True):
             return False
         self.log("")
         self.log("[*] Step 2: Unlocking bootloader...")
@@ -864,7 +993,14 @@ class ValhallaUnlockTool:
                                "- On Linux: try running with sudo")
             return
             
-        self.log(f"[+] Device: Motorola MediaTek (Serial: {serial})")
+        product = self.get_fastboot_var("product")
+        sku = self.get_fastboot_var("sku")
+        self.log(f"[+] Fastboot device detected (Serial: {serial})")
+        if product:
+            self.log(f"[+] Product: {product}")
+        if sku:
+            self.log(f"[+] SKU: {sku}")
+        self.log("[!] The tool cannot automatically verify that this device uses a compatible MediaTek LK.")
         self.log(f"[+] Serial: {serial}")
         self.log(f"[+] Mode: {self.selected_mode.get()}")
         self.log("")
@@ -882,20 +1018,21 @@ class ValhallaUnlockTool:
         mode = self.selected_mode.get()
         self.check_btn.config(state=tk.DISABLED)
         self.unlock_btn.config(state=tk.DISABLED)
+        success = False
         try:
             if mode == "bootloader":
-                self.run_bootloader_unlock()
+                success = self.run_bootloader_unlock()
             elif mode == "frp":
-                self.run_frp_only()
+                success = self.run_frp_only()
             elif mode == "both":
-                self.run_both()
+                success = self.run_both()
         except Exception as e:
             self.log(f"[!] Error: {str(e)}")
             messagebox.showerror("Error", f"An error occurred: {str(e)}")
         finally:
             self.check_btn.config(state=tk.NORMAL)
             self.unlock_btn.config(state=tk.DISABLED)
-            self.update_status("Done")
+            self.update_status("Completed" if success else "Failed or cancelled")
             
     def reset_tool(self):
         self.log("")
